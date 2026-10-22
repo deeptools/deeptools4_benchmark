@@ -37,19 +37,3 @@ rule multibamsummary_dt3:
     --outRawCounts {output.tsv} \
     -b {input.bam_files} --genomeChunkSize 10000000
   """
-
-rule compare_multibamsummary:
-  input:
-    dt3 = lambda wildcards: f"output/mbs_{wildcards.run}.dt3_t{MULTIBAMSUMMARY_THREADS}_rep1.tsv",
-    dt4 = lambda wildcards: f"output/mbs_{wildcards.run}.dt4_t{MULTIBAMSUMMARY_THREADS}_rep1.tsv"
-  output:
-    tsv = "results/numerical_diff/multibamsummary_{run}.tsv"
-  params:
-    mode = "npz",
-    tool = "multiBamSummary",
-    sample = lambda wildcards: wildcards.run
-  resources:
-    mem_mb = 20000,
-    runtime = 1440
-  script:
-    "scripts/compare_dt3_dt4.py"

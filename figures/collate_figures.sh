@@ -21,12 +21,16 @@ cp "$SCRIPT_DIR/../benchmark/results/performance_memory.png" "$SCRIPT_DIR/supp_f
 cp "$SCRIPT_DIR/../benchmark/results/performance_memory.pdf" "$SCRIPT_DIR/supp_figure2.pdf"
 
 
-## Figure 3 - galaxy, to implement
+## Supp. Figure 3 - supplemental figure (numerical difference deepTools 3 vs 4, generated before, results committed to repo)
+cp "$SCRIPT_DIR/../benchmark/results/numerical_diff_hist.png" "$SCRIPT_DIR/supp_figure3.png"
+cp "$SCRIPT_DIR/../benchmark/results/numerical_diff_hist.pdf" "$SCRIPT_DIR/supp_figure3.pdf"
+
+## Figure 3 - galaxy
 
 ## Figure 4 - example (generated before, results committed to repo)cp
 cp "$SCRIPT_DIR/../example/results/figure_combined.png" "$SCRIPT_DIR/figure4.png"
 cp "$SCRIPT_DIR/../example/results/figure_combined.pdf" "$SCRIPT_DIR/figure4.pdf"
 
-## Supp. Figure - supplemental figure (generated before, results committed to repo)
-cp "$SCRIPT_DIR/../example/results/example_viz.png" "$SCRIPT_DIR/supp_figure3.png"
-cp "$SCRIPT_DIR/../example/results/example_viz.pdf" "$SCRIPT_DIR/supp_figure3.pdf"
+## Supp. Figure 4 - supplemental figure (generated before, results committed to repo)
+cp "$SCRIPT_DIR/../example/results/example_viz.png" "$SCRIPT_DIR/supp_figure4.png"
+cp "$SCRIPT_DIR/../example/results/example_viz.pdf" "$SCRIPT_DIR/supp_figure4.pdf"

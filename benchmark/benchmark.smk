@@ -136,6 +136,7 @@ include: 'rules/bamcoverage.smk'
 include: 'rules/bamcompare.smk'
 include: 'rules/multibamsummary.smk'
 include: 'rules/computematrix.smk'
+include: 'rules/verify.smk'
 include: 'rules/plotter.smk'
 include: 'rules/benchmark_summary.smk'
 include: 'rules/download_data.smk'
@@ -192,3 +193,4 @@ rule all:
         'results/sample_stats.tsv',
         'results/benchmark_summary.tsv',
         'results/numerical_diff.tsv',
+        'results/numerical_diff_hist.png',

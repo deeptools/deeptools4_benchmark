@@ -8,65 +8,126 @@ sample = snakemake.params.sample
 row = {"tool": tool, "sample": sample}
 
 CHUNK_SIZE = 50_000_000
+HIST_EDGES = np.logspace(-9, 4, 13 * 4 + 1)
+THRESHOLDS = (1e-6, 1e-3, 1e-1)
 
 
-def streaming_compare(chunk_pairs):
-    """
-    chunk_pairs: iterable of (x, y) same-length float32 numpy arrays.
-    Returns (n, pearson_r, max_abs_diff) without ever materializing full arrays.
-    """
-    n = 0
-    sx = sy = sxx = syy = sxy = 0.0
-    max_abs_diff = 0.0
-    for x, y in chunk_pairs:
-        n += x.size
-        sx += x.sum(dtype=np.float64)
-        sy += y.sum(dtype=np.float64)
-        sxx += (x * x).sum(dtype=np.float64)
-        syy += (y * y).sum(dtype=np.float64)
-        sxy += (x * y).sum(dtype=np.float64)
-        chunk_max = float(np.abs(x - y).max())
-        if chunk_max > max_abs_diff:
-            max_abs_diff = chunk_max
+class DiffStats:
 
-    if n == 0:
-        return 0, float("nan"), float("nan")
+    def __init__(self):
+        self.n = 0
+        self.n_missing_mismatch = 0
+        self.n_nonzero = 0
+        self.sx = self.sy = self.sxx = self.syy = self.sxy = 0.0
+        self.max_abs = 0.0
+        self.max_abs_loc = None
+        self.max_rel = 0.0
+        self.counts = np.zeros(len(HIST_EDGES) + 1, dtype=np.int64)  # under, bins..., over
+        self.n_zero = 0
+        self.n_gt = {t: 0 for t in THRESHOLDS}
 
-    cov = sxy / n - (sx / n) * (sy / n)
-    var_x = sxx / n - (sx / n) ** 2
-    var_y = syy / n - (sy / n) ** 2
-    denom = np.sqrt(var_x * var_y)
-    pearson_r = float(cov / denom) if denom > 0 else float("nan")
-    return n, pearson_r, max_abs_diff
+    def update(self, x, y, loc=lambda flat_idx: flat_idx):
+        x = np.asarray(x, dtype=np.float64).ravel()
+        y = np.asarray(y, dtype=np.float64).ravel()
+        nx, ny = np.isnan(x), np.isnan(y)
+        self.n_missing_mismatch += int((nx != ny).sum())
+        keep = ~(nx | ny)
+        if not keep.all():
+            idx_map = np.flatnonzero(keep)
+            x, y = x[keep], y[keep]
+        else:
+            idx_map = None
+        if x.size == 0:
+            return
+
+        self.n += x.size
+        self.sx += x.sum()
+        self.sy += y.sum()
+        self.sxx += (x * x).sum()
+        self.syy += (y * y).sum()
+        self.sxy += (x * y).sum()
+
+        d = np.abs(x - y)
+        k = int(d.argmax())
+        if d[k] > self.max_abs:
+            self.max_abs = float(d[k])
+            flat = int(idx_map[k]) if idx_map is not None else k
+            self.max_abs_loc = loc(flat)
+
+        nz = d > 0
+        n_nz = int(nz.sum())
+        self.n_nonzero += n_nz
+        self.n_zero += d.size - n_nz
+        if n_nz:
+            dn = d[nz]
+            denom = np.maximum(np.abs(x[nz]), np.abs(y[nz]))
+            self.max_rel = max(self.max_rel, float((dn / denom).max()))
+            self.counts += np.bincount(np.searchsorted(HIST_EDGES, dn), minlength=len(self.counts))
+            for t in THRESHOLDS:
+                self.n_gt[t] += int((dn > t).sum())
+
+    def finish(self):
+        n = self.n
+        if n == 0:
+            pearson_r = float("nan")
+        else:
+            cov = self.sxy / n - (self.sx / n) * (self.sy / n)
+            var_x = self.sxx / n - (self.sx / n) ** 2
+            var_y = self.syy / n - (self.sy / n) ** 2
+            denom = np.sqrt(var_x * var_y)
+            pearson_r = float(cov / denom) if denom > 0 else float("nan")
+        out = {
+            "n_values": n,
+            "pearson_r": pearson_r,
+            "n_nan_mismatch": self.n_missing_mismatch,
+            "n_nonidentical": self.n_nonzero,
+            "frac_identical": self.n_zero / n if n else float("nan"),
+            "max_abs_diff": self.max_abs,
+            "max_abs_diff_loc": self.max_abs_loc,
+            "max_rel_diff": self.max_rel,
+        }
+        for t in THRESHOLDS:
+            out[f"n_diff_gt_{t:g}"] = self.n_gt[t]
+        return out
+
+    def histogram(self):
+        lo = np.concatenate([[0.0], [0.0], HIST_EDGES[:-1], [HIST_EDGES[-1]]])
+        hi = np.concatenate([[0.0], [HIST_EDGES[0]], HIST_EDGES[1:], [np.inf]])
+        counts = np.concatenate([[self.n_zero], self.counts])
+        return pd.DataFrame({"lower": lo, "upper": hi, "count": counts})
+
+
+def write_hist(stats):
+    if "hist" in snakemake.output.keys():
+        stats.histogram().to_csv(snakemake.output.hist, sep="\t", index=False)
 
 
 if mode == "bigwig":
     import pyBigWig
 
-    def chrom_chunks(bw, chrom, length):
-        for start in range(0, length, CHUNK_SIZE):
-            end = min(start + CHUNK_SIZE, length)
-            try:
-                vals = bw.values(chrom, start, end, numpy=True)
-            except TypeError:
-                vals = np.array(bw.values(chrom, start, end))
-            yield np.nan_to_num(vals, copy=False).astype(np.float32, copy=False)
-
     def paired_chunks(bw3, bw4):
         for chrom, length in bw3.chroms().items():
             if chrom not in bw4.chroms():
                 continue
-            yield from zip(chrom_chunks(bw3, chrom, length), chrom_chunks(bw4, chrom, length))
+            for start in range(0, length, CHUNK_SIZE):
+                end = min(start + CHUNK_SIZE, length)
+                v3 = np.array(bw3.values(chrom, start, end, numpy=True), dtype=np.float32)
+                v4 = np.array(bw4.values(chrom, start, end, numpy=True), dtype=np.float32)
+                yield chrom, start, v3, v4
 
     bw3 = pyBigWig.open(snakemake.input.dt3)
     bw4 = pyBigWig.open(snakemake.input.dt4)
-    n_values, pearson_r, max_abs_diff = streaming_compare(paired_chunks(bw3, bw4))
+    row["chroms_only_dt3"] = ",".join(c for c in bw3.chroms() if c not in bw4.chroms())
+    row["chroms_only_dt4"] = ",".join(c for c in bw4.chroms() if c not in bw3.chroms())
+
+    stats = DiffStats()
+    for chrom, start, v3, v4 in paired_chunks(bw3, bw4):
+        stats.update(v3, v4, loc=lambda i, c=chrom, s=start: f"{c}:{s + i}")
     bw3.close()
     bw4.close()
 
-    row["n_values"] = n_values
-    row["pearson_r"] = pearson_r
-    row["max_abs_diff"] = max_abs_diff
+    row.update(stats.finish())
+    write_hist(stats)
 
 
 elif mode == "npz":
@@ -77,35 +138,34 @@ elif mode == "npz":
     row["shape_dt4"] = str(d4.shape)
     row["shape_mismatch"] = d3.shape != d4.shape
 
-    def coord_keys(df):
-        return list(zip(df.iloc[:, 0].astype(str),
-                        df.iloc[:, 1].astype(np.int64),
-                        df.iloc[:, 2].astype(np.int64)))
-
-    pos4 = {c: j for j, c in enumerate(coord_keys(d4))}
-    matches = [(i, pos4[c]) for i, c in enumerate(coord_keys(d3)) if c in pos4]
-
-    idx = np.linspace(0, len(matches) - 1, min(len(matches), 20_000)).astype(int)
-    sel = [matches[k] for k in idx]
-    v3_rows = [i for i, _ in sel]
-    v4_rows = [j for _, j in sel]
-
-    v3 = d3.iloc[v3_rows, 3:].to_numpy(dtype=np.float64)
-    v4 = d4.iloc[v4_rows, 3:].to_numpy(dtype=np.float64)
+    for d in (d3, d4):
+        d.columns = ["chrom", "start", "end"] + [f"s{i}" for i in range(d.shape[1] - 3)]
+        d["chrom"] = d["chrom"].astype(str)
+    merged = d3.merge(d4, on=["chrom", "start", "end"], suffixes=("_3", "_4"))
+    ncol = d3.shape[1] - 3
+    v3 = merged[[f"s{i}_3" for i in range(ncol)]].to_numpy(dtype=np.float64)
+    v4 = merged[[f"s{i}_4" for i in range(ncol)]].to_numpy(dtype=np.float64)
 
     row["n_bins_dt3"] = len(d3)
     row["n_bins_dt4"] = len(d4)
-    row["n_common_bins"] = len(matches)
-    row["n_common_bins_sampled"] = len(sel)
-    row["n_values"] = v3.size
-    row["pearson_r"] = float(np.corrcoef(v3.ravel(), v4.ravel())[0, 1]) if v3.size else float("nan")
-    row["max_abs_diff"] = float(np.max(np.abs(v3 - v4))) if v3.size else float("nan")
+    row["n_common_bins"] = len(merged)
+
+    coords = merged[["chrom", "start", "end"]].to_numpy()
+
+    def loc(i):
+        r, c = divmod(i, ncol)
+        return f"{coords[r][0]}:{coords[r][1]}-{coords[r][2]} sample{c}"
+
+    stats = DiffStats()
+    stats.update(v3, v4, loc=loc)
+    row.update(stats.finish())
+    write_hist(stats)
 
 
 elif mode == "matrix":
     from deeptools.heatmapper import heatmapper
 
-    ROW_LIMIT = 20_000
+    ROW_CHUNK = 20_000
 
     hm3 = heatmapper()
     hm3.read_matrix_file(snakemake.input.dt3)
@@ -117,58 +177,114 @@ elif mode == "matrix":
     row["shape_dt4"] = str(m4.shape)
     row["shape_mismatch"] = m3.shape != m4.shape
 
-    n_rows = min(m3.shape[0], m4.shape[0], ROW_LIMIT)
-    m3_head = np.ma.filled(m3[:n_rows], 0.0)
-    m4_head = np.ma.filled(m4[:n_rows], 0.0)
+    n_rows = min(m3.shape[0], m4.shape[0])
+    ncol = min(m3.shape[1], m4.shape[1])
+    stats = DiffStats()
+    for a in range(0, n_rows, ROW_CHUNK):
+        b = min(a + ROW_CHUNK, n_rows)
+        c3 = np.ma.filled(m3[a:b, :ncol].astype(np.float64), np.nan)
+        c4 = np.ma.filled(m4[a:b, :ncol].astype(np.float64), np.nan)
+        stats.update(c3, c4, loc=lambda i, a=a: f"row{a + i // ncol} col{i % ncol}")
 
-    row["n_values"] = m3_head.size
-    row["pearson_r"] = float(np.corrcoef(m3_head.ravel(), m4_head.ravel())[0, 1])
-    row["max_abs_diff"] = float(np.max(np.abs(m3_head - m4_head)))
+    row.update(stats.finish())
+    write_hist(stats)
+
 
 elif mode == "bam":
+    import os
     import pysam
+    from collections import Counter
+    from multiprocessing import Pool
 
-    INDEX_LIMIT = 20_000
+    COUNTERS = ["n3", "n4", "n_identical", "n_only_dt3", "n_only_dt4",
+                "n_flag_mismatch", "n_qlen_mismatch", "n_cigar_mismatch", "n_mapq_mismatch"]
 
-    def sample_index(path, limit):
-        idx = {}
-        n_reads = 0
-        with pysam.AlignmentFile(path, "rb") as f:
-            for read in f:
-                if read.is_unmapped or read.is_secondary or read.is_supplementary:
-                    continue
-                n_reads += 1
-                if len(idx) < limit:
-                    idx[(read.query_name, read.is_read1)] = (
-                        read.reference_start,
-                        read.query_length,
-                        read.flag,
-                    )
-        return idx, n_reads
+    def groups(f, contig):
+        """Yield [(key, info), ...] for each distinct start position on contig (coordinate order)."""
+        cur, buf = None, []
+        for read in f.fetch(contig):
+            if read.is_unmapped:
+                continue
+            if read.reference_start != cur:
+                if buf:
+                    yield cur, buf
+                cur, buf = read.reference_start, []
+            buf.append((
+                (read.query_name, bool(read.flag & 64)),
+                (read.flag, read.query_length, read.cigarstring, read.mapping_quality),
+            ))
+        if buf:
+            yield cur, buf
 
-    def targeted_index(path, targets):
-        idx = {}
-        n_reads = 0
-        with pysam.AlignmentFile(path, "rb") as f:
-            for read in f:
-                if read.is_unmapped or read.is_secondary or read.is_supplementary:
-                    continue
-                n_reads += 1
-                key = (read.query_name, read.is_read1)
-                if key in targets:
-                    idx[key] = (read.reference_start, read.query_length, read.flag)
-        return idx, n_reads
+    def compare_group(b3, b4, c):
+        """Match the reads at one start position, updating the counter dict c."""
+        c3 = Counter(b3)
+        c4 = Counter(b4)
+        same = c3 & c4
+        c["n_identical"] += sum(same.values())
+        left3 = c3 - same
+        left4 = c4 - same
+        by_key4 = {}
+        for (k, i), n in left4.items():
+            by_key4.setdefault(k, []).extend([i] * n)
+        for (k, i3), n in left3.items():
+            for _ in range(n):
+                cand = by_key4.get(k)
+                if cand:
+                    i4 = cand.pop()
+                    c["n_flag_mismatch"] += i3[0] != i4[0]
+                    c["n_qlen_mismatch"] += i3[1] != i4[1]
+                    c["n_cigar_mismatch"] += i3[2] != i4[2]
+                    c["n_mapq_mismatch"] += i3[3] != i4[3]
+                else:
+                    c["n_only_dt3"] += 1
+        c["n_only_dt4"] += sum(len(v) for v in by_key4.values())
 
-    idx3, n_reads_dt3 = sample_index(snakemake.input.dt3, INDEX_LIMIT)
-    idx4, n_reads_dt4 = targeted_index(snakemake.input.dt4, idx3)
+    def compare_contig(args):
+        path3, path4, contig = args
+        c = dict.fromkeys(COUNTERS, 0)
+        with pysam.AlignmentFile(path3, "rb") as f3, pysam.AlignmentFile(path4, "rb") as f4:
+            g3, g4 = groups(f3, contig), groups(f4, contig)
+            a, b = next(g3, None), next(g4, None)
+            while a is not None or b is not None:
+                if b is None or (a is not None and a[0] < b[0]):
+                    c["n3"] += len(a[1]); c["n_only_dt3"] += len(a[1]); a = next(g3, None)
+                elif a is None or b[0] < a[0]:
+                    c["n4"] += len(b[1]); c["n_only_dt4"] += len(b[1]); b = next(g4, None)
+                else:
+                    c["n3"] += len(a[1]); c["n4"] += len(b[1])
+                    compare_group(a[1], b[1], c)
+                    a, b = next(g3, None), next(g4, None)
+        return contig, c
+    sorted_paths = {}
+    for key in ("dt3", "dt4"):
+        src = snakemake.input[key]
+        dst = f"{snakemake.output.tsv}.{key}.sorted.bam"
+        pysam.sort("-@", str(snakemake.threads), "-m", "500M", "-o", dst, src)
+        pysam.index("-c", dst)
+        sorted_paths[key] = dst
+    sorted3, sorted4 = sorted_paths["dt3"], sorted_paths["dt4"]
 
-    common = idx3.keys() & idx4.keys()
-    row["n_reads_dt3"] = n_reads_dt3
-    row["n_reads_dt4"] = n_reads_dt4
-    row["n_common_reads_sampled"] = len(common)
-    row["n_pos_mismatch"] = sum(idx3[k][0] != idx4[k][0] for k in common)
-    row["n_qlen_mismatch"] = sum(idx3[k][1] != idx4[k][1] for k in common)
-    row["n_flag_mismatch"] = sum(idx3[k][2] != idx4[k][2] for k in common)
+    with pysam.AlignmentFile(sorted3, "rb") as f3, pysam.AlignmentFile(sorted4, "rb") as f4:
+        if f3.references != f4.references:
+            raise RuntimeError("dt3 and dt4 BAMs have different reference sequences")
+        order = sorted(zip(f3.references, f3.lengths), key=lambda t: -t[1])
+        jobs = [(sorted3, sorted4, name) for name, _ in order]
+
+    total = dict.fromkeys(COUNTERS, 0)
+    with Pool(snakemake.threads) as pool:
+        for _, c in pool.imap_unordered(compare_contig, jobs):
+            for k in COUNTERS:
+                total[k] += c[k]
+
+    for path in sorted_paths.values():
+        os.remove(path)
+        os.remove(path + ".csi")
+
+    row["n_reads_dt3"] = total["n3"]
+    row["n_reads_dt4"] = total["n4"]
+    for k in COUNTERS[2:]:
+        row[k] = total[k]
 
 
 else:
