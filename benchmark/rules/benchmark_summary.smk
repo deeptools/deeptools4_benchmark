@@ -33,3 +33,21 @@ rule combine_numerical_diff:
     import pandas as pd
     df = pd.concat([pd.read_csv(f, sep="\t") for f in input], ignore_index=True)
     df.to_csv(output.tsv, sep="\t", index=False)
+
+rule plot_numerical_diff:
+  localrule: True
+  input:
+    tsv = 'results/numerical_diff.tsv',
+    hists = lambda wc: (
+      expand("results/numerical_diff/bamcoverage_{s}.hist.tsv", s=bamCoverage_samples.keys())
+      + expand("results/numerical_diff/bamcompare_{s}.hist.tsv", s=bamCompare_samples.keys())
+      + expand("results/numerical_diff/multibamsummary_{s}.hist.tsv", s=multibamSummary_samples.keys())
+      + expand("results/numerical_diff/computematrix_{s}.hist.tsv", s=computeMatrix_samples.keys())
+    )
+  output:
+    png = 'results/numerical_diff_hist.png',
+    pdf = 'results/numerical_diff_hist.pdf',
+    tiff = 'results/numerical_diff_hist.tiff'
+  conda: 'env/plotter.yaml'
+  script:
+    'scripts/plot_numerical_diff.py'
