@@ -1,3 +1,5 @@
+import re
+
 import numpy as np
 import pandas as pd
 
@@ -8,7 +10,16 @@ sample = snakemake.params.sample
 row = {"tool": tool, "sample": sample}
 
 CHUNK_SIZE = 50_000_000
+CANONICAL = re.compile(r"^(chr)?(\d{1,2}|X|Y|M|MT)$|^[1-7][ABD]$")
+
+
+def is_canonical(name):
+    return CANONICAL.match(str(name)) is not None
+
+
+row["canonical_only"] = True
 HIST_EDGES = np.logspace(-9, 4, 13 * 4 + 1)
+REL_EDGES = np.logspace(-12, 0, 12 * 4 + 1)  # |dt3 - dt4| / max(|dt3|, |dt4|) is at most 1
 THRESHOLDS = (1e-6, 1e-3, 1e-1)
 
 
@@ -23,6 +34,7 @@ class DiffStats:
         self.max_abs_loc = None
         self.max_rel = 0.0
         self.counts = np.zeros(len(HIST_EDGES) + 1, dtype=np.int64)  # under, bins..., over
+        self.rel_counts = np.zeros(len(REL_EDGES) + 1, dtype=np.int64)
         self.n_zero = 0
         self.n_gt = {t: 0 for t in THRESHOLDS}
 
@@ -61,8 +73,10 @@ class DiffStats:
         if n_nz:
             dn = d[nz]
             denom = np.maximum(np.abs(x[nz]), np.abs(y[nz]))
-            self.max_rel = max(self.max_rel, float((dn / denom).max()))
+            rel = dn / denom
+            self.max_rel = max(self.max_rel, float(rel.max()))
             self.counts += np.bincount(np.searchsorted(HIST_EDGES, dn), minlength=len(self.counts))
+            self.rel_counts += np.bincount(np.searchsorted(REL_EDGES, rel), minlength=len(self.rel_counts))
             for t in THRESHOLDS:
                 self.n_gt[t] += int((dn > t).sum())
 
@@ -90,16 +104,19 @@ class DiffStats:
             out[f"n_diff_gt_{t:g}"] = self.n_gt[t]
         return out
 
-    def histogram(self):
-        lo = np.concatenate([[0.0], [0.0], HIST_EDGES[:-1], [HIST_EDGES[-1]]])
-        hi = np.concatenate([[0.0], [HIST_EDGES[0]], HIST_EDGES[1:], [np.inf]])
-        counts = np.concatenate([[self.n_zero], self.counts])
+    def histogram(self, relative=False):
+        edges, counts = (REL_EDGES, self.rel_counts) if relative else (HIST_EDGES, self.counts)
+        lo = np.concatenate([[0.0], [0.0], edges[:-1], [edges[-1]]])
+        hi = np.concatenate([[0.0], [edges[0]], edges[1:], [np.inf]])
+        counts = np.concatenate([[self.n_zero], counts])
         return pd.DataFrame({"lower": lo, "upper": hi, "count": counts})
 
 
 def write_hist(stats):
     if "hist" in snakemake.output.keys():
         stats.histogram().to_csv(snakemake.output.hist, sep="\t", index=False)
+    if "relhist" in snakemake.output.keys():
+        stats.histogram(relative=True).to_csv(snakemake.output.relhist, sep="\t", index=False)
 
 
 if mode == "bigwig":
@@ -107,7 +124,7 @@ if mode == "bigwig":
 
     def paired_chunks(bw3, bw4):
         for chrom, length in bw3.chroms().items():
-            if chrom not in bw4.chroms():
+            if chrom not in bw4.chroms() or not is_canonical(chrom):
                 continue
             for start in range(0, length, CHUNK_SIZE):
                 end = min(start + CHUNK_SIZE, length)
@@ -142,6 +159,9 @@ elif mode == "npz":
         d.columns = ["chrom", "start", "end"] + [f"s{i}" for i in range(d.shape[1] - 3)]
         d["chrom"] = d["chrom"].astype(str)
     merged = d3.merge(d4, on=["chrom", "start", "end"], suffixes=("_3", "_4"))
+    canon = merged["chrom"].map(is_canonical)
+    row["n_noncanonical_bins_excluded"] = int((~canon).sum())
+    merged = merged[canon]
     ncol = d3.shape[1] - 3
     v3 = merged[[f"s{i}_3" for i in range(ncol)]].to_numpy(dtype=np.float64)
     v4 = merged[[f"s{i}_4" for i in range(ncol)]].to_numpy(dtype=np.float64)
@@ -179,12 +199,20 @@ elif mode == "matrix":
 
     n_rows = min(m3.shape[0], m4.shape[0])
     ncol = min(m3.shape[1], m4.shape[1])
+    # rows are regions; keep canonical chromosomes only, and check both versions list the same regions
+    r3, r4 = hm3.matrix.regions[:n_rows], hm4.matrix.regions[:n_rows]
+    keep = np.array([is_canonical(r[0]) for r in r3], dtype=bool)
+    row["n_noncanonical_rows_excluded"] = int((~keep).sum())
+    row["n_region_mismatch"] = sum(
+        (a[0], a[1], a[2]) != (b[0], b[1], b[2]) for a, b, k in zip(r3, r4, keep) if k
+    )
+    rows = np.flatnonzero(keep)
     stats = DiffStats()
-    for a in range(0, n_rows, ROW_CHUNK):
-        b = min(a + ROW_CHUNK, n_rows)
-        c3 = np.ma.filled(m3[a:b, :ncol].astype(np.float64), np.nan)
-        c4 = np.ma.filled(m4[a:b, :ncol].astype(np.float64), np.nan)
-        stats.update(c3, c4, loc=lambda i, a=a: f"row{a + i // ncol} col{i % ncol}")
+    for a in range(0, len(rows), ROW_CHUNK):
+        idx = rows[a:a + ROW_CHUNK]
+        c3 = np.ma.filled(m3[idx, :ncol].astype(np.float64), np.nan)
+        c4 = np.ma.filled(m4[idx, :ncol].astype(np.float64), np.nan)
+        stats.update(c3, c4, loc=lambda i, idx=idx: f"row{idx[i // ncol]} col{i % ncol}")
 
     row.update(stats.finish())
     write_hist(stats)
@@ -268,7 +296,8 @@ elif mode == "bam":
     with pysam.AlignmentFile(sorted3, "rb") as f3, pysam.AlignmentFile(sorted4, "rb") as f4:
         if f3.references != f4.references:
             raise RuntimeError("dt3 and dt4 BAMs have different reference sequences")
-        order = sorted(zip(f3.references, f3.lengths), key=lambda t: -t[1])
+        order = sorted(((n, l) for n, l in zip(f3.references, f3.lengths) if is_canonical(n)),
+                       key=lambda t: -t[1])
         jobs = [(sorted3, sorted4, name) for name, _ in order]
 
     total = dict.fromkeys(COUNTERS, 0)

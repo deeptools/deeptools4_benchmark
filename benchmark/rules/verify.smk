@@ -46,15 +46,16 @@ rule compare_bamcoverage:
   input: unpack(lambda wc: verify_pair("bamcoverage", wc.s, "bw"))
   output:
     tsv = "results/numerical_diff/bamcoverage_{s}.tsv",
-    hist = "results/numerical_diff/bamcoverage_{s}.hist.tsv"
+    hist = "results/numerical_diff/bamcoverage_{s}.hist.tsv",
+    relhist = "results/numerical_diff/bamcoverage_{s}.relhist.tsv"
   params: mode = "bigwig", tool = "bamCoverage", sample = lambda wc: wc.s
   resources: mem_mb = 20000, runtime = 1440
   script: "scripts/compare_dt3_dt4.py"
 
 rule verify_bamcompare_dt3:
   input:
-    bam = lambda wc: f"bamfiles/{bamCompare_samples[wc.s][0]}.bam",
-    ctrlbam = lambda wc: f"bamfiles/{bamCompare_samples[wc.s][1]}.bam"
+    bam = lambda wc: f"bamfiles/{VERIFY_bamCompare_samples[wc.s][0]}.bam",
+    ctrlbam = lambda wc: f"bamfiles/{VERIFY_bamCompare_samples[wc.s][1]}.bam"
   output: bw = temp("output/verify/bamcompare_{s}.dt3.bw")
   threads: VERIFY_THREADS
   resources: mem_mb = 20000, runtime = 1440
@@ -62,24 +63,26 @@ rule verify_bamcompare_dt3:
 
 rule verify_bamcompare_dt4:
   input:
-    bam = lambda wc: f"bamfiles/{bamCompare_samples[wc.s][0]}.bam",
-    ctrlbam = lambda wc: f"bamfiles/{bamCompare_samples[wc.s][1]}.bam"
+    bam = lambda wc: f"bamfiles/{VERIFY_bamCompare_samples[wc.s][0]}.bam",
+    ctrlbam = lambda wc: f"bamfiles/{VERIFY_bamCompare_samples[wc.s][1]}.bam"
   output: bw = temp("output/verify/bamcompare_{s}.dt4.bw")
   threads: VERIFY_THREADS
-  resources: mem_mb = 20000, runtime = 1440
+  # dt4 peaks at ~18.6 GB on bcom_triticum_chip (benchmarks/), so 20 GB OOMs on the other triticum pairs
+  resources: mem_mb = 40000, runtime = 1440
   shell: "bamCompare -b1 {input.bam} -b2 {input.ctrlbam} -o {output.bw} --binSize 10 -p {threads}"
 
 rule compare_bamcompare:
   input: unpack(lambda wc: verify_pair("bamcompare", wc.s, "bw"))
   output:
     tsv = "results/numerical_diff/bamcompare_{s}.tsv",
-    hist = "results/numerical_diff/bamcompare_{s}.hist.tsv"
+    hist = "results/numerical_diff/bamcompare_{s}.hist.tsv",
+    relhist = "results/numerical_diff/bamcompare_{s}.relhist.tsv"
   params: mode = "bigwig", tool = "bamCompare", sample = lambda wc: wc.s
   resources: mem_mb = 20000, runtime = 1440
   script: "scripts/compare_dt3_dt4.py"
 
 rule verify_multibamsummary_dt3:
-  input: bam_files = lambda wc: [f"bamfiles/{i}.bam" for i in multibamSummary_samples[wc.s]]
+  input: bam_files = lambda wc: [f"bamfiles/{i}.bam" for i in VERIFY_multibamSummary_samples[wc.s]]
   output:
     npz = temp("output/verify/multibamsummary_{s}.dt3.npz"),
     tsv = temp("output/verify/multibamsummary_{s}.dt3.tsv")
@@ -88,7 +91,7 @@ rule verify_multibamsummary_dt3:
   shell: "multiBamSummary_old bins -p {threads} -o {output.npz} --outRawCounts {output.tsv} -b {input.bam_files} --genomeChunkSize 10000000"
 
 rule verify_multibamsummary_dt4:
-  input: bam_files = lambda wc: [f"bamfiles/{i}.bam" for i in multibamSummary_samples[wc.s]]
+  input: bam_files = lambda wc: [f"bamfiles/{i}.bam" for i in VERIFY_multibamSummary_samples[wc.s]]
   output:
     npz = temp("output/verify/multibamsummary_{s}.dt4.npz"),
     tsv = temp("output/verify/multibamsummary_{s}.dt4.tsv")
@@ -100,14 +103,15 @@ rule compare_multibamsummary:
   input: unpack(lambda wc: verify_pair("multibamsummary", wc.s, "tsv"))
   output:
     tsv = "results/numerical_diff/multibamsummary_{s}.tsv",
-    hist = "results/numerical_diff/multibamsummary_{s}.hist.tsv"
+    hist = "results/numerical_diff/multibamsummary_{s}.hist.tsv",
+    relhist = "results/numerical_diff/multibamsummary_{s}.relhist.tsv"
   params: mode = "npz", tool = "multiBamSummary", sample = lambda wc: wc.s
   resources: mem_mb = 40000, runtime = 1440
   script: "scripts/compare_dt3_dt4.py"
 
 rule verify_computematrix_dt3:
   input:
-    bw_files = lambda wc: [f"zenodo/{i}.bw" for i in computeMatrix_samples[wc.s]],
+    bw_files = lambda wc: [f"zenodo/{i}.bw" for i in VERIFY_computeMatrix_samples[wc.s]],
     gtf = lambda wc: f"zenodo/{wc.s.split('_')[1]}.gtf"
   output: npz = temp("output/verify/computematrix_{s}.dt3.npz")
   threads: VERIFY_THREADS
@@ -116,7 +120,7 @@ rule verify_computematrix_dt3:
 
 rule verify_computematrix_dt4:
   input:
-    bw_files = lambda wc: [f"zenodo/{i}.bw" for i in computeMatrix_samples[wc.s]],
+    bw_files = lambda wc: [f"zenodo/{i}.bw" for i in VERIFY_computeMatrix_samples[wc.s]],
     gtf = lambda wc: f"zenodo/{wc.s.split('_')[1]}.gtf"
   output: npz = temp("output/verify/computematrix_{s}.dt4.npz")
   threads: VERIFY_THREADS
@@ -127,7 +131,8 @@ rule compare_computematrix:
   input: unpack(lambda wc: verify_pair("computematrix", wc.s, "npz"))
   output:
     tsv = "results/numerical_diff/computematrix_{s}.tsv",
-    hist = "results/numerical_diff/computematrix_{s}.hist.tsv"
+    hist = "results/numerical_diff/computematrix_{s}.hist.tsv",
+    relhist = "results/numerical_diff/computematrix_{s}.relhist.tsv"
   params: mode = "matrix", tool = "computeMatrix", sample = lambda wc: wc.s
   resources: mem_mb = 60000, runtime = 1440
   script: "scripts/compare_dt3_dt4.py"

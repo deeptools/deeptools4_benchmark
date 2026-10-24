@@ -24,9 +24,9 @@ rule combine_numerical_diff:
   input:
     expand("results/numerical_diff/alignmentsieve_{s}.tsv", s=alignmentSieve_samples.keys()),
     expand("results/numerical_diff/bamcoverage_{s}.tsv", s=bamCoverage_samples.keys()),
-    expand("results/numerical_diff/bamcompare_{s}.tsv", s=bamCompare_samples.keys()),
-    expand("results/numerical_diff/multibamsummary_{s}.tsv", s=multibamSummary_samples.keys()),
-    expand("results/numerical_diff/computematrix_{s}.tsv", s=computeMatrix_samples.keys())
+    expand("results/numerical_diff/bamcompare_{s}.tsv", s=VERIFY_bamCompare_samples.keys()),
+    expand("results/numerical_diff/multibamsummary_{s}.tsv", s=VERIFY_multibamSummary_samples.keys()),
+    expand("results/numerical_diff/computematrix_{s}.tsv", s=VERIFY_computeMatrix_samples.keys())
   output:
     tsv = 'results/numerical_diff.tsv'
   run:
@@ -40,10 +40,16 @@ rule plot_numerical_diff:
     tsv = 'results/numerical_diff.tsv',
     hists = lambda wc: (
       expand("results/numerical_diff/bamcoverage_{s}.hist.tsv", s=bamCoverage_samples.keys())
-      + expand("results/numerical_diff/bamcompare_{s}.hist.tsv", s=bamCompare_samples.keys())
-      + expand("results/numerical_diff/multibamsummary_{s}.hist.tsv", s=multibamSummary_samples.keys())
-      + expand("results/numerical_diff/computematrix_{s}.hist.tsv", s=computeMatrix_samples.keys())
-    )
+      + expand("results/numerical_diff/bamcompare_{s}.hist.tsv", s=VERIFY_bamCompare_samples.keys())
+      + expand("results/numerical_diff/multibamsummary_{s}.hist.tsv", s=VERIFY_multibamSummary_samples.keys())
+      + expand("results/numerical_diff/computematrix_{s}.hist.tsv", s=VERIFY_computeMatrix_samples.keys())
+    ),
+    relhists = lambda wc: (
+      expand("results/numerical_diff/bamcoverage_{s}.relhist.tsv", s=bamCoverage_samples.keys())
+      + expand("results/numerical_diff/bamcompare_{s}.relhist.tsv", s=VERIFY_bamCompare_samples.keys())
+      + expand("results/numerical_diff/multibamsummary_{s}.relhist.tsv", s=VERIFY_multibamSummary_samples.keys())
+      + expand("results/numerical_diff/computematrix_{s}.relhist.tsv", s=VERIFY_computeMatrix_samples.keys())
+    ),
   output:
     png = 'results/numerical_diff_hist.png',
     pdf = 'results/numerical_diff_hist.pdf',
