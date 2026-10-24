@@ -22,30 +22,48 @@ organisms = {"human": "Human", "triticum": "Triticum"}
 
 STEP = 10 ** 0.25
 ymin = 1e-11
+rel_override = {"bamCompare": (hists, lambda x: np.expm1(np.minimum(x, 64) * np.log(2)))}
 panels = [
-    (hists, -8, 1, "|deepTools3 - deepTools4|"),
-    (relhists, -12, 0, "|deepTools3 - deepTools4| / max(|deepTools3|, |deepTools4|)"),
+    (hists, -8, 1, "abs. diff", {}),
+    (relhists, -12, 0, "rel. diff", rel_override),
 ]
 
 
-def draw(ax, hs, org, first, last):
+def run_fracs(tool, org, hs, override):
+    sub = diff[(diff["tool"] == tool) & diff["sample"].str.contains(org)]
+    fracs = []
+    for _, r in sub.iterrows():
+        key = f"{prefix[tool]}_{r['sample']}"
+        grid = hs[key]
+        if tool in override:
+            src, fn = override[tool]
+            h = src[key]
+            hi = h["upper"].to_numpy()
+            lo = np.concatenate([[0, hi[1] / STEP], hi[1:-1]])
+            mid = fn(np.sqrt(lo * np.where(np.isinf(hi), lo * STEP, hi)))
+            rows = np.concatenate([[0], np.searchsorted(grid["upper"].to_numpy()[1:], mid[1:]) + 1])
+            counts = np.bincount(rows, weights=h["count"].to_numpy(), minlength=len(grid))
+        else:
+            counts = grid["count"].to_numpy()
+        fracs.append(counts / counts.sum())
+    return np.mean(fracs, axis=0), grid["upper"].to_numpy(), len(fracs)
+
+
+def draw(ax, hs, org, first, last, override):
     zero_lo, zero_hi = 10.0 ** (first - 2), 10.0 ** (first - 1.5)
     for k, tool in enumerate(tools):
-        sub = diff[(diff["tool"] == tool) & diff["sample"].str.contains(org)]
-        fracs = []
-        for _, r in sub.iterrows():
-            h = hs[f"{prefix[tool]}_{r['sample']}"]
-            fracs.append((h["count"] / h["count"].sum()).to_numpy())
-        frac = np.mean(fracs, axis=0)
-        hi = h["upper"].to_numpy()
-        lo = np.concatenate([[0, hi[1] / STEP], hi[1:-1]])  # row 0: exact zeros, row 1: below the first edge
+        frac, hi, n = run_fracs(tool, org, hs, override)
+        lo = np.concatenate([[0, hi[1] / STEP], hi[1:-1]])
         mid = np.sqrt(lo[1:-1] * hi[1:-1])
-        f = np.where(frac[1:-1] > 0, frac[1:-1], np.nan)  # empty bins are left out rather than drawn at the floor
-        ax.fill_between(mid, ymin, f, color=colors[tool], alpha=0.2, lw=0, where=~np.isnan(f))
-        ax.plot(mid, f, color=colors[tool], lw=0.8, alpha=0.9, marker="o", ms=2, label=f"{tool} (n={len(fracs)})")
+        f = frac[1:-1]
+        keep = f > 0
+        x = np.concatenate([[mid[keep][0] / STEP], mid[keep], [mid[keep][-1] * STEP]])
+        y = np.concatenate([[ymin], f[keep], [ymin]])
+        ax.fill_between(x, ymin, y, color=colors[tool], alpha=0.2, lw=0)
+        ax.plot(x, y, color=colors[tool], lw=1, label=f"{tool} (n={n})")
         slot = (zero_hi / zero_lo) ** (1 / len(tools))
         ax.bar(zero_lo * slot ** k, frac[0] - ymin, width=zero_lo * slot ** (k + 1) - zero_lo * slot ** k,
-               bottom=ymin, align="edge", color=colors[tool], alpha=0.5, lw=0)
+               bottom=ymin, align="edge", color=colors[tool], lw=0)
     ax.axvline(10.0 ** (first - 1.4), color="0.6", lw=0.8, ls=":")
     ax.set_xscale("log")
     ax.set_yscale("log")
@@ -59,9 +77,9 @@ def draw(ax, hs, org, first, last):
 
 fig, axes = plt.subplots(2, 2, figsize=(14, 7), sharey=True)
 for i, (org, title) in enumerate(organisms.items()):
-    for j, (hs, first, last, xlabel) in enumerate(panels):
+    for j, (hs, first, last, xlabel, override) in enumerate(panels):
         ax = axes[i, j]
-        draw(ax, hs, org, first, last)
+        draw(ax, hs, org, first, last, override)
         ax.set_title(title)
         if j == 0:
             ax.set_ylabel("fraction of values")
