@@ -75,7 +75,7 @@ def draw(ax, hs, org, first, last, override):
     ax.minorticks_off()
 
 
-fig, axes = plt.subplots(2, 2, figsize=(14, 7), sharey=True)
+fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharey=True)  # same size as the other figures
 for i, (org, title) in enumerate(organisms.items()):
     for j, (hs, first, last, xlabel, override) in enumerate(panels):
         ax = axes[i, j]
@@ -88,7 +88,7 @@ for i, (org, title) in enumerate(organisms.items()):
         else:
             ax.tick_params(labelbottom=False)
 handles, labels = axes[0, 0].get_legend_handles_labels()
-fig.legend(handles, labels, loc="lower center", ncol=len(tools), fontsize=8, frameon=False)
+fig.legend(handles, labels, loc="lower center", ncol=len(tools), fontsize=plt.rcParams["axes.labelsize"], frameon=False)
 fig.tight_layout(rect=(0, 0.04, 1, 1))
 fig.savefig(snakemake.output.png, dpi=300)
 fig.savefig(snakemake.output.pdf)
