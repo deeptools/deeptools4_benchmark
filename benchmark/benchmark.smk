@@ -125,6 +125,26 @@ computeMatrix_samples = {
   ] * 5
 }
 
+VERIFY_bamCompare_samples = {
+  **bamCompare_samples,
+  'bcom_human_rna': ['human_rna_SRR28012902', 'human_wgs_SRR15494527'],
+  'bcom_human_chiprna': ['human_chip_SRR28592124', 'human_rna_SRR28012902'],
+  'bcom_triticum_rna': ['triticum_rna_SRR27822150', 'triticum_wgs_SRR27887047'],
+  'bcom_triticum_chiprna': ['triticum_chip_SRR1686799', 'triticum_rna_SRR27822150']
+}
+
+VERIFY_multibamSummary_samples = {
+  **multibamSummary_samples,
+  'mbs_human_6': multibamSummary_samples['mbs_human_3'] * 2,
+  'mbs_triticum_6': multibamSummary_samples['mbs_triticum_3'] * 2
+}
+
+VERIFY_computeMatrix_samples = {
+  **computeMatrix_samples,
+  'cm_human_6': computeMatrix_samples['cm_human_3'] * 2,
+  'cm_triticum_6': computeMatrix_samples['cm_triticum_3'] * 2
+}
+
 ALSIEVE_THREADS = 20
 BAMCOVERAGE_THREADS = 20
 BAMCOMPARE_THREADS = 20
