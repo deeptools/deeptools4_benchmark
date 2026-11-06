@@ -1,16 +1,11 @@
 rule benchmark_summary:
   localrule: True
   input:
-    alsieve4 = expand("benchmarks/alignmentsieve/{alignmentsieve}_dt4_t{n}_rep{rep}.txt", alignmentsieve=alignmentSieve_samples, n=thread_range(ALSIEVE_THREADS), rep=REPS),
-    alsieve3 = expand("benchmarks/alignmentsieve/{alignmentsieve}_dt3_t{n}_rep{rep}.txt", alignmentsieve=alignmentSieve_samples, n=thread_range(ALSIEVE_THREADS), rep=REPS),
-    bcov4 = expand("benchmarks/bamcoverage/{bamcoverage}_dt4_t{n}_rep{rep}.txt", bamcoverage=bamCoverage_samples, n=thread_range(BAMCOVERAGE_THREADS), rep=REPS),
-    bcov3 = expand("benchmarks/bamcoverage/{bamcoverage}_dt3_t{n}_rep{rep}.txt", bamcoverage=bamCoverage_samples, n=thread_range(BAMCOVERAGE_THREADS), rep=REPS),
-    bcom4 = expand("benchmarks/bamcompare/{bamcompare}_dt4_t{n}_rep{rep}.txt", bamcompare=bamCompare_samples.keys(), n=thread_range(BAMCOMPARE_THREADS), rep=REPS),
-    bcom3 = expand("benchmarks/bamcompare/{bamcompare}_dt3_t{n}_rep{rep}.txt", bamcompare=bamCompare_samples.keys(), n=thread_range(BAMCOMPARE_THREADS), rep=REPS),
-    mbs4 = expand("benchmarks/multibamsummary/{run}_dt4_t{n}_rep{rep}.txt", run=multibamSummary_samples.keys(), n=thread_range(MULTIBAMSUMMARY_THREADS), rep=REPS),
-    mbs3 = expand("benchmarks/multibamsummary/{run}_dt3_t{n}_rep{rep}.txt", run=multibamSummary_samples.keys(), n=thread_range(MULTIBAMSUMMARY_THREADS), rep=REPS),
-    cm4 = expand("benchmarks/computeMatrix/{run}_dt4_t{n}_rep{rep}.txt", run=computeMatrix_samples.keys(), n=thread_range(COMPUTEMATRIX_THREADS), rep=REPS),
-    cm3 = expand("benchmarks/computeMatrix/{run}_dt3_t{n}_rep{rep}.txt", run=computeMatrix_samples.keys(), n=thread_range(COMPUTEMATRIX_THREADS), rep=REPS)
+    alsieve = bench_inputs("alignmentsieve", alignmentSieve_samples, ALSIEVE_THREADS),
+    bcov = bench_inputs("bamcoverage", bamCoverage_samples, BAMCOVERAGE_THREADS),
+    bcom = bench_inputs("bamcompare", bamCompare_samples, BAMCOMPARE_THREADS),
+    mbs = bench_inputs("multibamsummary", multibamSummary_samples, MULTIBAMSUMMARY_THREADS),
+    cm = bench_inputs("computeMatrix", computeMatrix_samples, COMPUTEMATRIX_THREADS)
   output:
     tsv = 'results/benchmark_summary.tsv'
   conda: 'env/plotter.yaml'

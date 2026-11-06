@@ -3,6 +3,8 @@ import yaml
 import os
 import platform
 import sys
+import glob
+import re
 
 if not config.get('os'):
     system_name = platform.system()
@@ -48,6 +50,21 @@ REPS = list(range(1, config['repeats'] + 1))
 
 def thread_range(max_threads):
     return list(range(1, max_threads + 1)) if EXHAUSTIVE else [max_threads]
+
+_bench_re = re.compile(r'^(.+)_(dt[34])_t(\d+)_rep(\d+)\.txt$')
+
+def bench_inputs(tooldir, samples, max_threads):
+    samples = set(samples)
+    threads = set(thread_range(max_threads))
+    files = set(expand(
+        "benchmarks/{d}/{s}_{v}_t{n}_rep{rep}.txt",
+        d=tooldir, s=sorted(samples), v=['dt3', 'dt4'], n=sorted(threads), rep=REPS
+    ))
+    for f in glob.glob(f"benchmarks/{tooldir}/*_rep*.txt"):
+        m = _bench_re.match(os.path.basename(f))
+        if m and m.group(1) in samples and int(m.group(3)) in threads:
+            files.add(f)
+    return sorted(files)
 
 ALLFILES = (
     expand("{f}.cram", f=CRAMFILES)
