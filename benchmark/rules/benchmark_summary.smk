@@ -13,8 +13,6 @@ rule benchmark_summary:
     cm3 = expand("benchmarks/computeMatrix/{run}_dt3_t{n}_rep{rep}.txt", run=computeMatrix_samples.keys(), n=thread_range(COMPUTEMATRIX_THREADS), rep=REPS)
   output:
     tsv = 'results/benchmark_summary.tsv'
-  params:
-    max_threads = 20
   conda: 'env/plotter.yaml'
   script:
     'scripts/benchmark_summary.py'

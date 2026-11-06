@@ -1,4 +1,5 @@
 import re
+import numpy as np
 import pandas as pd
 
 _stem_re = re.compile(r'_(dt[34])_t(\d+)_rep(\d+)$')
@@ -16,7 +17,6 @@ def read_benchmark(file):
     return a
 
 df = pd.concat([read_benchmark(f) for f in snakemake.input], ignore_index=True)
-max_threads = snakemake.params.max_threads
 
 # memory usage change (dt4 vs dt3), averaged over all threads/reps per sample
 mem = (
@@ -32,19 +32,29 @@ mem['mem_diff_pct'] = 100 * (mem['dt4'] - mem['dt3']) / mem['dt3']
 mem_summary = mem.groupby('tool')[['dt3_gb', 'dt4_gb', 'mem_diff_pct', 'mem_diff_gb']].mean()
 mem_summary.columns = ['mean_mem_dt3_gb', 'mean_mem_dt4_gb', 'mean_mem_diff_pct', 'mean_mem_diff_gb']
 
-# runtime speedup (dt3 / dt4) at max_threads, averaged per sample
-t_max = df[df['threads'] == max_threads]
+# runtime speedup (dt3 / dt4) over all thread counts:
 time = (
-    t_max.groupby(['tool', 'sample', 'version'])['s']
-         .mean()
-         .unstack('version')
-         .dropna(subset=['dt3', 'dt4'])
+    df.groupby(['tool', 'sample', 'threads', 'version'])['s']
+      .mean()
+      .unstack('version')
+      .dropna(subset=['dt3', 'dt4'])
 )
 time['speedup'] = time['dt3'] / time['dt4']
-speed_summary = time.groupby('tool')['speedup'].agg(['mean', 'median'])
-speed_summary.columns = ['mean_speedup', 'median_speedup']
+time['log_speedup'] = np.log(time['speedup'])
+grp = time.groupby('tool')
+speed_summary = pd.DataFrame({
+    'geomean_speedup': np.exp(grp['log_speedup'].mean()),
+    'mean_speedup': grp['speedup'].mean(),
+    'median_speedup': grp['speedup'].median(),
+    'min_speedup': grp['speedup'].min(),
+    'max_speedup': grp['speedup'].max(),
+    'n_samples': time.reset_index().groupby('tool')['sample'].nunique(),
+    'n_threads': time.reset_index().groupby('tool')['threads'].nunique(),
+})
 
 summary = mem_summary.join(speed_summary, how='outer').reset_index()
-summary = summary[['tool', 'mean_speedup', 'median_speedup', 'mean_mem_dt3_gb', 'mean_mem_dt4_gb', 'mean_mem_diff_pct', 'mean_mem_diff_gb']]
+summary = summary[['tool', 'geomean_speedup', 'mean_speedup', 'median_speedup', 'min_speedup', 'max_speedup',
+                   'n_samples', 'n_threads',
+                   'mean_mem_dt3_gb', 'mean_mem_dt4_gb', 'mean_mem_diff_pct', 'mean_mem_diff_gb']]
 summary = summary.round(2)
 summary.to_csv(snakemake.output.tsv, sep='\t', index=False)
