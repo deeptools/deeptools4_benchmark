@@ -42,18 +42,24 @@ time = (
 time['speedup'] = time['dt3'] / time['dt4']
 time['log_speedup'] = np.log(time['speedup'])
 grp = time.groupby('tool')
+
+time = time.reset_index()
+time['genome'] = time['sample'].str.extract(r'(human|triticum)', expand=False)
+if time['genome'].isna().any():
+    raise ValueError(f"Cannot infer genome for samples: {time.loc[time['genome'].isna(), 'sample'].unique()}")
+tg = time.groupby(['tool', 'threads', 'genome'])['speedup'].agg(['min', 'max']).groupby('tool')
+
 speed_summary = pd.DataFrame({
     'geomean_speedup': np.exp(grp['log_speedup'].mean()),
-    'mean_speedup': grp['speedup'].mean(),
     'median_speedup': grp['speedup'].median(),
-    'min_speedup': grp['speedup'].min(),
-    'max_speedup': grp['speedup'].max(),
-    'n_samples': time.reset_index().groupby('tool')['sample'].nunique(),
-    'n_threads': time.reset_index().groupby('tool')['threads'].nunique(),
+    'mean_min_speedup': tg['min'].mean(),
+    'mean_max_speedup': tg['max'].mean(),
+    'n_samples': time.groupby('tool')['sample'].nunique(),
+    'n_threads': time.groupby('tool')['threads'].nunique(),
 })
 
 summary = mem_summary.join(speed_summary, how='outer').reset_index()
-summary = summary[['tool', 'geomean_speedup', 'mean_speedup', 'median_speedup', 'min_speedup', 'max_speedup',
+summary = summary[['tool', 'geomean_speedup', 'median_speedup', 'mean_min_speedup', 'mean_max_speedup',
                    'n_samples', 'n_threads',
                    'mean_mem_dt3_gb', 'mean_mem_dt4_gb', 'mean_mem_diff_pct', 'mean_mem_diff_gb']]
 summary = summary.round(2)
