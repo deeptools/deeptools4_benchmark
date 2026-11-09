@@ -30,6 +30,8 @@ class DiffStats:
         self.n_missing_mismatch = 0
         self.n_nonzero = 0
         self.sx = self.sy = self.sxx = self.syy = self.sxy = 0.0
+        self.n_corr = 0  # values entering Pearson: positions where both tracks are 0 are left out
+        self.n_zero_dt3 = self.n_zero_dt4 = self.n_both_zero = 0
         self.max_abs = 0.0
         self.max_abs_loc = None
         self.max_rel = 0.0
@@ -53,11 +55,18 @@ class DiffStats:
             return
 
         self.n += x.size
-        self.sx += x.sum()
-        self.sy += y.sum()
-        self.sxx += (x * x).sum()
-        self.syy += (y * y).sum()
-        self.sxy += (x * y).sum()
+        zx, zy = x == 0, y == 0
+        both = zx & zy
+        self.n_zero_dt3 += int(zx.sum())
+        self.n_zero_dt4 += int(zy.sum())
+        self.n_both_zero += int(both.sum())
+        xc, yc = x[~both], y[~both]
+        self.n_corr += xc.size
+        self.sx += xc.sum()
+        self.sy += yc.sum()
+        self.sxx += (xc * xc).sum()
+        self.syy += (yc * yc).sum()
+        self.sxy += (xc * yc).sum()
 
         d = np.abs(x - y)
         k = int(d.argmax())
@@ -82,17 +91,22 @@ class DiffStats:
 
     def finish(self):
         n = self.n
-        if n == 0:
+        nc = self.n_corr
+        if nc == 0:
             pearson_r = float("nan")
         else:
-            cov = self.sxy / n - (self.sx / n) * (self.sy / n)
-            var_x = self.sxx / n - (self.sx / n) ** 2
-            var_y = self.syy / n - (self.sy / n) ** 2
+            cov = self.sxy / nc - (self.sx / nc) * (self.sy / nc)
+            var_x = self.sxx / nc - (self.sx / nc) ** 2
+            var_y = self.syy / nc - (self.sy / nc) ** 2
             denom = np.sqrt(var_x * var_y)
             pearson_r = float(cov / denom) if denom > 0 else float("nan")
         out = {
             "n_values": n,
-            "pearson_r": pearson_r,
+            "pearson_r": pearson_r,  # over positions where at least one track is non-zero
+            "n_pearson_values": nc,
+            "n_zero_dt3": self.n_zero_dt3,
+            "n_zero_dt4": self.n_zero_dt4,
+            "n_both_zero": self.n_both_zero,
             "n_nan_mismatch": self.n_missing_mismatch,
             "n_nonidentical": self.n_nonzero,
             "frac_identical": self.n_zero / n if n else float("nan"),
