@@ -43,11 +43,9 @@ time['speedup'] = time['dt3'] / time['dt4']
 time['log_speedup'] = np.log(time['speedup'])
 grp = time.groupby('tool')
 
+# min/max: per thread count take the worst/best dataset (both genomes pooled), then average over thread counts
 time = time.reset_index()
-time['genome'] = time['sample'].str.extract(r'(human|triticum)', expand=False)
-if time['genome'].isna().any():
-    raise ValueError(f"Cannot infer genome for samples: {time.loc[time['genome'].isna(), 'sample'].unique()}")
-tg = time.groupby(['tool', 'threads', 'genome'])['speedup'].agg(['min', 'max']).groupby('tool')
+tg = time.groupby(['tool', 'threads'])['speedup'].agg(['min', 'max']).groupby('tool')
 
 speed_summary = pd.DataFrame({
     'geomean_speedup': np.exp(grp['log_speedup'].mean()),
